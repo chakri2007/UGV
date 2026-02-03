@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'pid = ugv_controller.pid:main',
+            'cmd_pwm = ugv_controller.cmd_pwm:main',
         ],
     },
 )
