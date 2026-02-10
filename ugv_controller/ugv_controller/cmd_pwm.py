@@ -5,6 +5,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Int16MultiArray
 import time
+import serial
 
 
 class CmdVelToPWMSequencer(Node):
@@ -51,6 +52,12 @@ class CmdVelToPWMSequencer(Node):
             10
         )
 
+        self.ser = serial.Serial(
+            port='/dev/ttyACM0',   # change if needed
+            baudrate=115200,
+            timeout=1
+        )
+
         self.timer = self.create_timer(0.05, self.control_loop)
 
         self.get_logger().info("CmdVel → PWM Sequencer Started")
@@ -73,14 +80,11 @@ class CmdVelToPWMSequencer(Node):
         if abs(angular) < self.deadzone:
             return self.NEUTRAL
 
-        # RIGHT TURN
         if angular > 0:
             return int(
                 self.DEAD_MAX +
                 angular * (self.STEER_RIGHT - self.DEAD_MAX)
             )
-
-        # LEFT TURN
         else:
             return int(
                 self.DEAD_MIN -
@@ -128,29 +132,18 @@ class CmdVelToPWMSequencer(Node):
                     self.mode = "steer"
                     self.phase_start = now
 
-        # -----------------------------
-        # STRAIGHT DRIVE
-        # -----------------------------
         elif abs(linear) > self.deadzone:
             self.mode = "drive"
             throttle_pwm = self.map_linear(linear)
             steering_pwm = self.NEUTRAL
 
-        # -----------------------------
-        # PURE TURN
-        # -----------------------------
         elif abs(angular) > self.deadzone:
             self.mode = "steer"
             throttle_pwm = self.NEUTRAL
             steering_pwm = self.map_angular(angular)
 
-        # -----------------------------
-        # PUBLISH PWM
-        # -----------------------------
-        pwm_msg = Int16MultiArray()
-        pwm_msg.data = [throttle_pwm, steering_pwm]
-
-        self.pub.publish(pwm_msg)
+        cmd_str = f"{throttle_pwm},{steering_pwm}\n"
+        self.ser.write(cmd_str.encode('ascii'))
 
 
 def main(args=None):
