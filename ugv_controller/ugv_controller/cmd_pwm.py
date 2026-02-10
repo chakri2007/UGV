@@ -143,6 +143,7 @@ class CmdVelToPWMSequencer(Node):
             steering_pwm = self.map_angular(angular)
 
         cmd_str = f"{throttle_pwm},{steering_pwm}\n"
+        self.get_logger().info(f"Publishing PWM: {cmd_str.strip()}")
         self.ser.write(cmd_str.encode('ascii'))
 
 
