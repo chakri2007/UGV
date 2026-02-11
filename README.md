@@ -29,3 +29,7 @@ then go to workspace parent dir.
 check cm_pwm for no pid velocity to pwm converter
   
   ros2 run ugv_controller cmd_pwm.py
+
+
+  ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
+"{linear: {x: 0.2, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"

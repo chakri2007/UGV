@@ -63,6 +63,12 @@ class CmdVelPIDSequencer(Node):
         self.phase_start = time.time()
         self.last_time = time.time()
 
+        self.qx = 0.0
+        self.qy = 0.0
+        self.qz = 0.0
+        self.qw = 1.0
+
+
         # SERIAL
         self.ser = serial.Serial('/dev/ttyACM0', 115200, timeout=0.01)
 
@@ -112,12 +118,29 @@ class CmdVelPIDSequencer(Node):
     def read_feedback(self):
         try:
             line = self.ser.readline().decode().strip()
-            if line:
-                v, w = line.split(',')
-                self.meas_linear = float(v)
-                self.meas_angular = float(w)
-        except:
-            pass
+            if not line:
+                return
+
+            parts = line.split(',')
+
+            # EXPECTING: qx,qy,qz,qw
+            if len(parts) != 4:
+                return
+
+            qx = float(parts[0])
+            qy = float(parts[1])
+            qz = float(parts[2])
+            qw = float(parts[3])
+
+            # Store quaternion
+            self.qx = qx
+            self.qy = qy
+            self.qz = qz
+            self.qw = qw
+
+        except Exception as e:
+            self.get_logger().warn(f"IMU parse error: {e}")
+
 
 
     # ---------------- MAPPING FUNCTIONS ----------------
