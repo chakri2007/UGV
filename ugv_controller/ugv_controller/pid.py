@@ -63,16 +63,26 @@ class CmdVelPIDSequencer(Node):
         self.phase_start = time.time()
         self.last_time = time.time()
 
+        # Quaternion storage (UNCHANGED)
         self.qx = 0.0
         self.qy = 0.0
         self.qz = 0.0
         self.qw = 1.0
 
+        # ---------------- SERIAL ----------------
+        # INPUT: IMU feedback
+        self.ser_in = serial.Serial('/dev/ttyACM1', 115200, timeout=0.01)
+        if not self.ser_in.is_open:
+            self.get_logger().error("Failed to open serial port for IMU feedback")
+            raise Exception("Serial port error")
 
-        # SERIAL
-        self.ser = serial.Serial('/dev/ttyACM0', 115200, timeout=0.01)
+        # OUTPUT: PWM command
+        self.ser_out = serial.Serial('/dev/ttyACM0', 115200, timeout=0.01)
+        if not self.ser_out.is_open:
+            self.get_logger().error("Failed to open serial port for PWM output")
+            raise Exception("Serial port error")
 
-        # SUBSCRIBERS
+        # ---------------- SUBSCRIBERS ----------------
         self.create_subscription(
             Twist,
             '/cmd_vel',
@@ -89,7 +99,7 @@ class CmdVelPIDSequencer(Node):
 
         self.timer = self.create_timer(0.05, self.control_loop)
 
-        self.get_logger().info("PID Sequencer with Serial Output Started")
+        self.get_logger().info("PID Sequencer with Separate ACM Ports Started")
 
 
     # ---------------- CALLBACKS ----------------
@@ -117,7 +127,7 @@ class CmdVelPIDSequencer(Node):
     # ---------------- SERIAL FEEDBACK ----------------
     def read_feedback(self):
         try:
-            line = self.ser.readline().decode().strip()
+            line = self.ser_in.readline().decode().strip()
             if not line:
                 return
 
@@ -127,20 +137,13 @@ class CmdVelPIDSequencer(Node):
             if len(parts) != 4:
                 return
 
-            qx = float(parts[0])
-            qy = float(parts[1])
-            qz = float(parts[2])
-            qw = float(parts[3])
-
-            # Store quaternion
-            self.qx = qx
-            self.qy = qy
-            self.qz = qz
-            self.qw = qw
+            self.qx = float(parts[0])
+            self.qy = float(parts[1])
+            self.qz = float(parts[2])
+            self.qw = float(parts[3])
 
         except Exception as e:
             self.get_logger().warn(f"IMU parse error: {e}")
-
 
 
     # ---------------- MAPPING FUNCTIONS ----------------
@@ -183,8 +186,6 @@ class CmdVelPIDSequencer(Node):
         # ---------- PID (UNCHANGED) ----------
         error_lin = cmd_linear - self.meas_linear
         error_ang = cmd_angular - self.meas_angular
-        self.get_logger().debug(f"Errors | Linear: {error_lin:.3f} | Angular: {error_ang:.3f}")
-
         corr_lin = self.pid_linear.compute(error_lin, dt)
         corr_ang = self.pid_angular.compute(error_ang, dt)
 
@@ -230,10 +231,11 @@ class CmdVelPIDSequencer(Node):
             throttle_pwm = self.NEUTRAL
             steering_pwm = self.map_angular(angular)
 
-        # -------- OUTPUT FORMAT (MATCHING YOUR REFERENCE) --------
+        # -------- OUTPUT FORMAT (UNCHANGED) --------
         cmd_str = f"{steering_pwm},{throttle_pwm}\n"
         self.get_logger().info(f"Publishing PWM: {cmd_str.strip()}")
-        self.ser.write(cmd_str.encode('ascii'))
+        self.get_logger().info(f"errors | linear: {error_lin} | angular: {error_ang}")
+        self.ser_out.write(cmd_str.encode('ascii'))
 
 
 # ---------------- MAIN ----------------
