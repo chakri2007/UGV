@@ -3,11 +3,12 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Int16MultiArray, Float32MultiArray
+from std_msgs.msg import Float32MultiArray
 import serial
 import time
 
 
+# ---------------- PID CLASS (UNCHANGED) ----------------
 class PID:
     def __init__(self, kp, ki, kd):
         self.kp = kp
@@ -25,9 +26,10 @@ class PID:
         self.integral += error * dt
         derivative = (error - self.prev_error) / dt if dt > 0 else 0.0
         self.prev_error = error
-        return self.kp*error + self.ki*self.integral + self.kd*derivative
+        return self.kp * error + self.ki * self.integral + self.kd * derivative
 
 
+# ---------------- MAIN NODE ----------------
 class CmdVelPIDSequencer(Node):
 
     def __init__(self):
@@ -48,7 +50,7 @@ class CmdVelPIDSequencer(Node):
         self.steer_duration = 0.3
         self.drive_duration = 0.4
 
-        # PID Controllers
+        # PID CONTROLLERS (UNCHANGED)
         self.pid_linear = PID(0.8, 0.0, 0.05)
         self.pid_angular = PID(1.0, 0.0, 0.08)
 
@@ -61,29 +63,38 @@ class CmdVelPIDSequencer(Node):
         self.phase_start = time.time()
         self.last_time = time.time()
 
-        # SERIAL FEEDBACK
+        # SERIAL
         self.ser = serial.Serial('/dev/ttyACM0', 115200, timeout=0.01)
 
         # SUBSCRIBERS
-        self.create_subscription(Twist, '/cmd_vel', self.cmd_callback, 10)
-        self.create_subscription(Float32MultiArray,
-                                 '/pid_tune',
-                                 self.pid_tune_callback,
-                                 10)
+        self.create_subscription(
+            Twist,
+            '/cmd_vel',
+            self.cmd_callback,
+            10
+        )
 
-        # PUBLISHER
-        self.pub = self.create_publisher(Int16MultiArray,
-                                         '/pwm_signals',
-                                         10)
+        self.create_subscription(
+            Float32MultiArray,
+            '/pid_tune',
+            self.pid_tune_callback,
+            10
+        )
 
         self.timer = self.create_timer(0.05, self.control_loop)
 
-        self.get_logger().info("PID Sequencer with Live Tuning Started")
+        self.get_logger().info("PID Sequencer with Serial Output Started")
+
+
+    # ---------------- CALLBACKS ----------------
+    def cmd_callback(self, msg):
+        self.current_cmd = msg
+
 
     def pid_tune_callback(self, msg):
 
         if len(msg.data) != 6:
-            self.get_logger().warn("pid_tune needs 6 values")
+            self.get_logger().warn("pid_tune requires 6 values")
             return
 
         kp_l, ki_l, kd_l, kp_a, ki_a, kd_a = msg.data
@@ -92,10 +103,12 @@ class CmdVelPIDSequencer(Node):
         self.pid_angular.update_gains(kp_a, ki_a, kd_a)
 
         self.get_logger().info(
-            f"Updated PID | Lin: {kp_l},{ki_l},{kd_l}  "
-            f"Ang: {kp_a},{ki_a},{kd_a}"
+            f"Updated PID | Linear: {kp_l},{ki_l},{kd_l} | "
+            f"Angular: {kp_a},{ki_a},{kd_a}"
         )
 
+
+    # ---------------- SERIAL FEEDBACK ----------------
     def read_feedback(self):
         try:
             line = self.ser.readline().decode().strip()
@@ -107,13 +120,15 @@ class CmdVelPIDSequencer(Node):
             pass
 
 
+    # ---------------- MAPPING FUNCTIONS ----------------
     def map_linear(self, linear):
         if linear > 0:
             return int(self.NEUTRAL -
-                       linear*(self.NEUTRAL-self.THROTTLE_MIN))
+                       linear * (self.NEUTRAL - self.THROTTLE_MIN))
         else:
             return int(self.NEUTRAL +
-                       abs(linear)*(self.THROTTLE_MAX-self.NEUTRAL))
+                       abs(linear) * (self.THROTTLE_MAX - self.NEUTRAL))
+
 
     def map_angular(self, angular):
         if abs(angular) < self.deadzone:
@@ -121,16 +136,13 @@ class CmdVelPIDSequencer(Node):
 
         if angular > 0:
             return int(self.DEAD_MAX +
-                       angular*(self.STEER_RIGHT-self.DEAD_MAX))
+                       angular * (self.STEER_RIGHT - self.DEAD_MAX))
         else:
             return int(self.DEAD_MIN -
-                       abs(angular)*(self.DEAD_MIN-self.STEER_LEFT))
+                       abs(angular) * (self.DEAD_MIN - self.STEER_LEFT))
 
-    # -------------------------
-    def cmd_callback(self, msg):
-        self.current_cmd = msg
 
-    # -------------------------
+    # ---------------- CONTROL LOOP ----------------
     def control_loop(self):
 
         self.read_feedback()
@@ -145,15 +157,17 @@ class CmdVelPIDSequencer(Node):
         if abs(cmd_angular) < self.angular_filter:
             cmd_angular = 0.0
 
-        # PID
+        # ---------- PID (UNCHANGED) ----------
         error_lin = cmd_linear - self.meas_linear
         error_ang = cmd_angular - self.meas_angular
+        self.get_logger().debug(f"Errors | Linear: {error_lin:.3f} | Angular: {error_ang:.3f}")
 
         corr_lin = self.pid_linear.compute(error_lin, dt)
         corr_ang = self.pid_angular.compute(error_ang, dt)
 
         linear = max(min(cmd_linear + corr_lin, 1.0), -1.0)
         angular = max(min(cmd_angular + corr_ang, 1.0), -1.0)
+        # ------------------------------------
 
         throttle_pwm = self.NEUTRAL
         steering_pwm = self.NEUTRAL
@@ -168,30 +182,38 @@ class CmdVelPIDSequencer(Node):
                 self.phase_start = now
 
             if self.mode == "steer":
+                throttle_pwm = self.NEUTRAL
                 steering_pwm = self.map_angular(angular)
 
-                if now-self.phase_start > self.steer_duration:
+                if now - self.phase_start > self.steer_duration:
                     self.mode = "drive"
                     self.phase_start = now
 
-            else:
+            elif self.mode == "drive":
                 throttle_pwm = self.map_linear(linear)
+                steering_pwm = self.NEUTRAL
 
-                if now-self.phase_start > self.drive_duration:
+                if now - self.phase_start > self.drive_duration:
                     self.mode = "steer"
                     self.phase_start = now
 
         elif abs(linear) > self.deadzone:
+            self.mode = "drive"
             throttle_pwm = self.map_linear(linear)
+            steering_pwm = self.NEUTRAL
 
         elif abs(angular) > self.deadzone:
+            self.mode = "steer"
+            throttle_pwm = self.NEUTRAL
             steering_pwm = self.map_angular(angular)
 
-        msg = Int16MultiArray()
-        msg.data = [throttle_pwm, steering_pwm]
-        self.pub.publish(msg)
+        # -------- OUTPUT FORMAT (MATCHING YOUR REFERENCE) --------
+        cmd_str = f"{steering_pwm},{throttle_pwm}\n"
+        self.get_logger().info(f"Publishing PWM: {cmd_str.strip()}")
+        self.ser.write(cmd_str.encode('ascii'))
 
 
+# ---------------- MAIN ----------------
 def main(args=None):
     rclpy.init(args=args)
     node = CmdVelPIDSequencer()
