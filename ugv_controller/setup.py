@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'pid = ugv_controller.pid:main',
             'cmd_pwm = ugv_controller.cmd_pwm:main',
+            'gps = ugv_controller.gps:main',
         ],
     },
 )
