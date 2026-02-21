@@ -31,9 +31,14 @@ class CmdVelToPWMSequencer(Node):
         self.deadzone = 0.05
         self.angular_filter = 0.15
 
-        # sequencing timings (TUNE ON ROBOT)
+        # sequencing timings
         self.steer_duration = 0.3
         self.drive_duration = 0.4
+
+        # ---------- NEW: cmd_vel timeout ----------
+        self.cmd_timeout = 5.0   # seconds
+        self.last_cmd_time = time.time()
+        # ------------------------------------------
 
         self.current_cmd = Twist()
         self.mode = "stop"
@@ -46,14 +51,8 @@ class CmdVelToPWMSequencer(Node):
             10
         )
 
-        self.pub = self.create_publisher(
-            Int16MultiArray,
-            '/pwm_signals',
-            10
-        )
-
         self.ser = serial.Serial(
-            port='/dev/ttyACM0',   # change if needed
+            port='/dev/ttyACM0',
             baudrate=115200,
             timeout=1
         )
@@ -63,46 +62,45 @@ class CmdVelToPWMSequencer(Node):
         self.get_logger().info("CmdVel → PWM Sequencer Started")
 
     def map_linear(self, linear):
-
         if linear > 0:
-            return int(
-                self.NEUTRAL -
-                linear * (self.NEUTRAL - self.THROTTLE_MIN)
-            )
+            return int(self.NEUTRAL - linear * (self.NEUTRAL - self.THROTTLE_MIN))
         else:
-            return int(
-                self.NEUTRAL +
-                abs(linear) * (self.THROTTLE_MAX - self.NEUTRAL)
-            )
+            return int(self.NEUTRAL + abs(linear) * (self.THROTTLE_MAX - self.NEUTRAL))
 
     def map_angular(self, angular):
-
         if abs(angular) < self.deadzone:
             return self.NEUTRAL
 
         if angular > 0:
-            return int(
-                self.DEAD_MAX +
-                angular * (self.STEER_RIGHT - self.DEAD_MAX)
-            )
+            return int(self.DEAD_MAX + angular * (self.STEER_RIGHT - self.DEAD_MAX))
         else:
-            return int(
-                self.DEAD_MIN -
-                abs(angular) * (self.DEAD_MIN - self.STEER_LEFT)
-            )
+            return int(self.DEAD_MIN - abs(angular) * (self.DEAD_MIN - self.STEER_LEFT))
 
     def cmd_callback(self, msg):
         self.current_cmd = msg
+        self.last_cmd_time = time.time()   # ✅ update timestamp
 
     def control_loop(self):
+
+        now = time.time()
+
+        # ---------- NEW: cmd_vel watchdog ----------
+        if now - self.last_cmd_time > self.cmd_timeout:
+            throttle_pwm = self.NEUTRAL
+            steering_pwm = self.NEUTRAL
+            self.mode = "stop"
+
+            cmd_str = f"{steering_pwm},{throttle_pwm}\n"
+            self.get_logger().warn("cmd_vel timeout → Sending NEUTRAL PWM")
+            self.ser.write(cmd_str.encode('ascii'))
+            return
+        # ------------------------------------------
 
         linear = max(min(self.current_cmd.linear.x, 1.0), -1.0)
         angular = max(min(self.current_cmd.angular.z, 1.0), -1.0)
 
         if abs(angular) < self.angular_filter:
             angular = 0.0
-
-        now = time.time()
 
         throttle_pwm = self.NEUTRAL
         steering_pwm = self.NEUTRAL
